@@ -70,4 +70,7 @@ jobs:
         run: aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
 
       - name: Apply the Kubernetes manifests with kustomize
-        run: kustomize build starter/backend/k8s | kubectl apply -f -
+        working-directory: starter/backend/k8s
+        run: |
+          kustomize edit set image backend=${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+          kustomize build | kubectl apply -f -
