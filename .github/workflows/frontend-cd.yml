@@ -94,3 +94,8 @@ jobs:
     - name: Configure Kubeconfig
       run:
        aws eks update-kubeconfig --name cluster --region us-east-1
+
+    - name: Deploy to EKS
+      run: |
+        kubectl apply -f deployment.yaml
+        kubectl apply -f service.yaml
