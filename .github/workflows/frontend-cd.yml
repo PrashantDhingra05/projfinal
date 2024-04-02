@@ -5,98 +5,64 @@ on:
   push:
     branches:
       - main
+    paths:
+      - 'starter/frontend/**'
+
+env:
+  NODE_VERSION: 16.9.0
+  REACT_APP_MOVIE_API_URL: http://localhost:5000
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: 885606131037.dkr.ecr.us-east-1.amazonaws.com/frontend
+  EKS_CLUSTER_NAME: cluster
 
 jobs:
-  Linting:
+  deploy:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Check the Repository
-      uses: actions/checkout@v3
+      - name: Checkout code
+        uses: actions/checkout@v3
 
-    - name: Use Node.js 18
-      uses: actions/setup-node@v3
-      with:
-        node-version: 18
-        cache: 'npm'
-        cache-dependency-path: starter/frontend/package-lock.json
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: 'starter/frontend/package-lock.json'
 
-    - name: Install Dependencies
-      working-directory: starter/frontend
-      run: npm ci
+      - name: Install Dependencies
+        working-directory: starter/frontend
+        run: npm ci
 
-    - name: Checkout Run Lint
-      run: cd starter/frontend && npm run lint
+      - name: Run Lint
+        working-directory: starter/frontend
+        run: npm run lint
 
-  Test:
-    runs-on: ubuntu-latest
+      - name: Run Tests
+        working-directory: starter/frontend
+        run: npm test
 
-    steps:
-    - name: Check the Repository
-      uses: actions/checkout@v3
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
 
-    - name: Use Node.js 18
-      uses: actions/setup-node@v3
-      with:
-        node-version: 18
-        cache: 'npm'
-        cache-dependency-path: starter/frontend/package-lock.json
-        
-    - name: Install Dependencies
-      working-directory: starter/frontend
-      run: npm ci
-  
-    - name: Test
-      run: cd starter/frontend && npm run test
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v1
 
+      - name: Build and Push Docker Image
+        working-directory: starter/frontend
+        run: |
+          docker build --build-arg REACT_APP_MOVIE_API_URL=${{ env.REACT_APP_MOVIE_API_URL }} -t ${{ env.ECR_REPOSITORY }}:${{ github.sha }} .
+          docker push ${{ env.ECR_REPOSITORY }}:${{ github.sha }}
 
+      - name: Configure Kubeconfig
+        run: aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
 
-  Build:
-    needs: [Linting, Test]
-    runs-on: ubuntu-latest
-    
-    steps:
-    - name: Check the Repository
-      uses: actions/checkout@v3
-    
-    - name: Use Node.js 18
-      uses: actions/setup-node@v3
-      with:
-        node-version: 18
-        cache: 'npm'
-        cache-dependency-path: starter/frontend/package-lock.json
-
-    - name: Configure AWS Credentials
-      uses: aws-actions/configure-aws-credentials@v2
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-session-token: ${{secrets.AWS_SESSION_TOKEN}}
-        aws-region: us-east-1
-  
-
-    - name: Login to Amazon 
-      id: login-ecr
-      uses: aws-actions/amazon-ecr-login@v2
-
-
-
-    - name: Build and Push Docker Image
-      working-directory: starter/frontend
-      env:
-        IMAGE_TAG: latest
-        REPO_NAME: frontend
-      run: |
-        docker build --build-arg=REACT_APP_MOVIE_API_URL=http://localhost:5000 --tag 885606131037.dkr.ecr.us-east-1.amazonaws.com/$REPO_NAME:$IMAGE_TAG .
-        docker push 885606131037.dkr.ecr.us-east-1.amazonaws.com/$REPO_NAME:$IMAGE_TAG
-    
-
-    - name: Configure Kubeconfig
-      run:
-       aws eks update-kubeconfig --name cluster --region us-east-1
-
-    - name: Deploy to EKS
-      working-directory: starter/frontend/k8s
-      run: |
-        kubectl apply -f deployment.yaml
-        kubectl apply -f service.yaml
+      - name: Deploy Docker Image to Amazon EKS
+        working-directory: starter/frontend/k8s
+        run: |
+          kustomize edit set image frontend=${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+          kustomize build | kubectl apply -f -
