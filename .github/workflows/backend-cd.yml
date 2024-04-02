@@ -1,86 +1,74 @@
 name: Backend Continuous Deployment
 
 on:
-  workflow_dispatch:
-  pull_request:
+  push:
     branches:
       - main
+    paths:
+      - 'starter/backend/**'
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: 885606131037.dkr.ecr.us-east-1.amazonaws.com/backend
+  EKS_CLUSTER_NAME: cluster
+  PYTHON_VERSION: 3.9
 
 jobs:
-  Linting:
+  deploy:
     runs-on: ubuntu-latest
-    steps:
-    - name: Check the Repository
-      uses: actions/checkout@v3
-
-    - name: Setup Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: "3.10"
-
-    - name: Install Rependencies
-      working-directory: starter/backend 
-      run:  |
-        python -m pip install --upgrade pip
-        pip install pipenv
-        pip install flake8
-
-    - name: Checkout Run Lint
-      run: cd starter/backend && pipenv run lint
-
-  Test:
-    runs-on: ubuntu-latest
+    environment: Production
 
     steps:
-    - name: Check the Repository
-      uses: actions/checkout@v3
+      - name: Check out the repository
+        uses: actions/checkout@v3
 
-    - name: Use Python 3
-      uses:  actions/setup-python@v4
-      with:
-        python-version: "3.10"
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
 
-    - name: Install Dependencies
-      working-directory: starter/backend 
-      run:  |
-        python -m pip install --upgrade pip
-        pip install pipenv
-        pip install flake8
+      - name: Install dependencies
+        working-directory: starter/backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install pipenv
+          pipenv install --dev
 
-    - name: Test
-      run: cd starter/backend && pipenv install pytest && pipenv run test
+      - name: Run linting
+        run: |
+          cd starter/backend
+          pipenv run lint
 
-      
-  Build:
-    needs: [Linting, Test]
-    runs-on: ubuntu-latest
-    
-    steps:
-    - name: Check the Repository
-      uses: actions/checkout@v3
+      - name: Run tests
+        run: |
+          cd starter/backend
+          pipenv run test
 
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{secrets.AWS_SESSION_TOKEN}}
+          aws-region: ${{ env.AWS_REGION }}
 
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
 
-    - name: Configure AWS Credentials
-      uses: aws-actions/configure-aws-credentials@v2
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-session-token: ${{secrets.AWS_SESSION_TOKEN}}
-        aws-region: us-east-1
-        
-    - name: Login to Amazon
-      id: login-ecr
-      uses: aws-actions/amazon-ecr-login@v2
+      - name: Build and push the Docker image
+        working-directory: starter/backend
+        run: |
+          docker build -t ${{ env.ECR_REPOSITORY }}:${{ github.sha }} .
+          docker push ${{ env.ECR_REPOSITORY }}:${{ github.sha }}
 
-    - name: Build and Push Docker Image
-      working-directory: starter/backend
-      env:
-        IMAGE_TAG: latest
-        REPO_NAME: backend
-      run: |
-        docker build --build-arg=REACT_APP_MOVIE_API_URL=http://localhost:5000 --tag 885606131037.dkr.ecr.us-east-1.amazonaws.com/$REPO_NAME:$IMAGE_TAG .
-        docker push 885606131037.dkr.ecr.us-east-1.amazonaws.com/$REPO_NAME:$IMAGE_TAG
-    - name: Update Kubeconfig
-      run:
-       aws eks update-kubeconfig --name cluster --region us-east-1
+      - name: Install Kustomize
+        run: |
+          curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
+          sudo mv kustomize /usr/local/bin/
+
+      - name: Update kubeconfig for Amazon EKS
+        run: aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
+
+      - name: Apply the Kubernetes manifests with kustomize
+        run: kustomize build starter/backend/k8s | kubectl apply -f -
