@@ -96,6 +96,7 @@ jobs:
        aws eks update-kubeconfig --name cluster --region us-east-1
 
     - name: Deploy to EKS
+      working-directory: starter/frontend/k8s
       run: |
-        kubectl apply -f ../../starter/frontend/k8s/deployment.yaml
+        kubectl apply -f deployment.yaml
         kubectl apply -f service.yaml
