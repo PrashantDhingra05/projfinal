@@ -34,7 +34,7 @@ jobs:
         run: cd starter/frontend && npm ci
       - name: Run lint
         run: cd starter/frontend && npm run lint
-  test:
+ test:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -52,7 +52,7 @@ jobs:
         run: cd starter/frontend && npm ci
       - name: Run test
         run: cd starter/frontend && npm run test
-  build:
+ build:
     needs: [lint,test]
     runs-on: ubuntu-latest
 
